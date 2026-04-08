@@ -254,6 +254,8 @@ void device_free(struct device *dev)
 
 	avl_delete(&devices, &dev->node);
 	device_clear_flows(dev);
+	bridger_bpf_del_port_untagged_vlan(device_ifindex(dev));
+	device_set_tx_attached(dev, false);
 	device_set_attached(dev, false);
 	if (dev->master)
 		list_del(&dev->member_list);
@@ -298,10 +300,33 @@ void device_update(struct device *dev)
 		uloop_timeout_set(&update_timer, 1);
 }
 
+static void device_update_port_untagged_vlan(struct device *dev)
+{
+	int i;
+
+	if (!dev->vlan || !dev->n_vlans || !dev->pvid) {
+		bridger_bpf_del_port_untagged_vlan(device_ifindex(dev));
+		return;
+	}
+
+	for (i = 0; i < dev->n_vlans; i++) {
+		if (dev->vlan[i].id != dev->pvid)
+			continue;
+		if (!dev->vlan[i].untagged)
+			continue;
+
+		bridger_bpf_set_port_untagged_vlan(device_ifindex(dev),
+						   dev->vlan[i].id);
+		return;
+	}
+
+	bridger_bpf_del_port_untagged_vlan(device_ifindex(dev));
+}
+
 static void __device_update(struct device *dev)
 {
 	struct device *master, *odev;
-	bool attach;
+	bool attach, tx_needed;
 
 	if (!dev->update)
 		return;
@@ -330,7 +355,10 @@ static void __device_update(struct device *dev)
 	attach = (dev->master || dev->br) && !bridger_ubus_dev_blacklisted(dev);
 	device_set_attached(dev, attach);
 	bridger_bpf_dev_policy_set(dev);
-	device_set_tx_attached(dev, attach && dev->redirect_dev);
+	tx_needed = dev->redirect_dev || bridger_isolation_active();
+	device_set_tx_attached(dev, attach && tx_needed && !dev->br);
+
+	device_update_port_untagged_vlan(dev);
 
 	odev = device_get_offload_dev(dev);
 	if (odev != dev->offload_dev)

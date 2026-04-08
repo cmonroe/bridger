@@ -136,6 +136,9 @@ void bridger_check_pending_flow(struct bridger_flow_key *key,
 	if (fdb_in->dev->isolated && fdb_out->dev->isolated)
 		return;
 
+	if (bridger_vlan_isolated(fkey.vlan))
+		return;
+
 	if (!device_vlan_state_forwarding(fdb_in->dev, fkey.vlan))
 		return;
 
@@ -217,6 +220,11 @@ bridger_flow_update_cb(struct uloop_timeout *timeout)
 	}
 
 	uloop_timeout_set(timeout, 1000);
+}
+
+int bridger_flow_count(void)
+{
+	return flows.count;
 }
 
 int bridger_flow_init(void)

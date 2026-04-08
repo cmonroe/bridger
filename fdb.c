@@ -30,7 +30,7 @@ struct fdb_entry *fdb_create(struct bridge *br, const struct fdb_key *key, struc
 	f = fdb_get(br, key);
 	if (f) {
 		fdb_set_device(f, dev);
-		return f;
+		goto out;
 	}
 
 	D("Create fdb vlan %d entry %s on %s\n",
@@ -45,15 +45,24 @@ struct fdb_entry *fdb_create(struct bridge *br, const struct fdb_key *key, struc
 	avl_insert(&br->fdb, &f->node);
 	fdb_set_device(f, dev);
 
+out:
+	if (bridger_isolation_gateway_mac(key->addr))
+		bridger_isolation_update_upstream(br);
+
 	return f;
 }
 
 void fdb_delete(struct bridge *br, struct fdb_entry *f)
 {
+	bool is_gateway = bridger_isolation_gateway_mac(f->key.addr);
+
 	D("Delete fdb vlan %d entry %s\n", f->key.vlan, format_macaddr(f->key.addr));
 	fdb_set_device(f, NULL);
 	avl_delete(&br->fdb, &f->node);
 	free(f);
+
+	if (is_gateway)
+		bridger_isolation_update_upstream(br);
 }
 
 void fdb_set_device(struct fdb_entry *f, struct device *dev)

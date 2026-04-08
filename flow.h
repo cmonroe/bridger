@@ -27,5 +27,6 @@ struct bridger_flow {
 int bridger_flow_init(void);
 void bridger_flow_delete(struct bridger_flow *flow);
 void bridger_check_pending_flow(struct bridger_flow_key *key, struct bridger_pending_flow *val);
+int bridger_flow_count(void);
 
 #endif
