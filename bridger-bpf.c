@@ -42,6 +42,24 @@ struct {
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 } dev_policy SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(pinning, 1);
+	__type(key, __u16);
+	__type(value, struct bridger_vlan_isolation);
+	__uint(max_entries, BRIDGER_ISOLATION_MAP_SIZE);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+} vlan_isolation SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(pinning, 1);
+	__type(key, __u32);
+	__type(value, __u16);
+	__uint(max_entries, BRIDGER_PORT_MAP_SIZE);
+	__uint(map_flags, BPF_F_NO_PREALLOC);
+} port_untagged_vlan SEC(".maps");
+
 struct vlanhdr {
 	__be16 tci;
 	__be16 encap_proto;
@@ -146,10 +164,49 @@ int bridger_output(struct __sk_buff *skb)
 	struct bridger_policy_flow *offload;
 	struct ethhdr *eth;
 	u32 ifindex = skb->ifindex;
+	u32 ingress_if = skb->ingress_ifindex;
 
 	eth = skb_ptr(skb, 0, sizeof(*eth) + sizeof(struct vlanhdr));
 	if (!eth)
 		return TC_ACT_UNSPEC;
+
+	if (!ingress_if)
+		goto skip_isolation;
+
+	if (eth->h_dest[0] == 0x01 && eth->h_dest[1] == 0x80 &&
+	    eth->h_dest[2] == 0xc2 && eth->h_dest[3] == 0x00 &&
+	    eth->h_dest[4] == 0x00)
+		goto skip_isolation;
+
+	{
+		struct bridger_vlan_isolation *iso;
+		__u16 vid = 0;
+
+		if (skb->vlan_present)
+			vid = skb->vlan_tci & BRIDGER_VLAN_ID;
+		else {
+			__u16 *uvid = bpf_map_lookup_elem(&port_untagged_vlan,
+							   &ifindex);
+			if (uvid)
+				vid = *uvid;
+		}
+
+		if (!vid)
+			goto skip_isolation;
+
+		iso = bpf_map_lookup_elem(&vlan_isolation, &vid);
+		if (!iso)
+			goto skip_isolation;
+
+		if (!ether_addr_cmp(eth->h_source, iso->gateway_mac))
+			goto skip_isolation;
+
+		if (!iso->upstream_ifindex ||
+		    (ingress_if != iso->upstream_ifindex &&
+		     ifindex != iso->upstream_ifindex))
+			return TC_ACT_SHOT;
+	}
+skip_isolation:
 
 	offload = bpf_map_lookup_elem(&dev_policy, &ifindex);
 	if (!offload)
@@ -202,6 +259,30 @@ int bridger_input(struct __sk_buff *skb)
 	if ((eth->h_source[0] | eth->h_dest[0]) & 1)
 		return TC_ACT_UNSPEC;
 
+	{
+		__u16 iso_vid = key.vlan & BRIDGER_VLAN_ID;
+		struct bridger_vlan_isolation *iso;
+
+		if (!iso_vid) {
+			__u16 *uvid = bpf_map_lookup_elem(&port_untagged_vlan,
+							   &key.ifindex);
+			if (uvid)
+				iso_vid = *uvid;
+		}
+
+		if (iso_vid) {
+			iso = bpf_map_lookup_elem(&vlan_isolation, &iso_vid);
+			if (iso) {
+				eth = skb_ptr(skb, 0, sizeof(*eth));
+				if (!eth)
+					return TC_ACT_UNSPEC;
+				if (ether_addr_cmp(eth->h_dest, iso->gateway_mac) &&
+				    ether_addr_cmp(eth->h_source, iso->gateway_mac))
+					return TC_ACT_SHOT;
+			}
+		}
+	}
+
 	if (proto == bpf_htons(ETH_P_IPV6)) {
 		struct ipv6hdr *ip6hdr;
 		int ofs;
@@ -225,7 +306,6 @@ int bridger_input(struct __sk_buff *skb)
 		goto out;
 	}
 
-dev_lookup:
 	offload = bpf_map_lookup_elem(&dev_policy, &key.ifindex);
 	if (offload) {
 		ret = bridger_offload(skb, offload, &key, &flags);

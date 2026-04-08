@@ -12,9 +12,11 @@
 
 #define BRIDGER_VLAN_ID		((1 << 12) - 1)
 
-#define BRIDGER_PENDING_FLOWS	32
-#define BRIDGER_OFFLOAD_FLOWS	256
-#define BRIDGER_DEVMAP_SIZE	64
+#define BRIDGER_PENDING_FLOWS		32
+#define BRIDGER_OFFLOAD_FLOWS		256
+#define BRIDGER_DEVMAP_SIZE		64
+#define BRIDGER_ISOLATION_MAP_SIZE	16
+#define BRIDGER_PORT_MAP_SIZE		64
 
 struct bridger_flow_key {
 	uint8_t dest[6];
@@ -37,6 +39,12 @@ struct bridger_offload_flow {
 struct bridger_policy_flow {
 	struct bridger_offload_flow flow;
 	uint8_t bridge_mac[6];
+};
+
+struct bridger_vlan_isolation {
+	uint32_t upstream_ifindex;
+	uint8_t gateway_mac[6];
+	uint8_t _pad[2];
 };
 
 #endif

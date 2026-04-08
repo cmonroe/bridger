@@ -15,6 +15,8 @@ static struct bpf_program *prog, *tx_prog;
 static int map_pending = -1;
 static int map_offload = -1;
 static int map_policy = -1;
+static int map_isolation = -1;
+static int map_port_untagged = -1;
 static struct uloop_timeout poll_timer;
 int bridger_bpf_prog_fd = -1;
 int bridger_bpf_tx_prog_fd = -1;
@@ -158,13 +160,42 @@ bridger_create_program(void)
 
 	if (!bridger_get_map_fd(&map_pending, "pending_flows") ||
 	    !bridger_get_map_fd(&map_offload, "offload_flows") ||
-	    !bridger_get_map_fd(&map_policy, "dev_policy"))
+	    !bridger_get_map_fd(&map_policy, "dev_policy") ||
+	    !bridger_get_map_fd(&map_isolation, "vlan_isolation") ||
+	    !bridger_get_map_fd(&map_port_untagged, "port_untagged_vlan"))
 		return -1;
 
 	bridger_bpf_prog_fd = bpf_program__fd(prog);
 	bridger_bpf_tx_prog_fd = bpf_program__fd(tx_prog);
 
 	return 0;
+}
+
+void bridger_bpf_set_vlan_isolation(uint16_t vid,
+				    struct bridger_vlan_isolation *iso)
+{
+	bpf_map_update_elem(map_isolation, &vid, iso, BPF_ANY);
+}
+
+void bridger_bpf_del_vlan_isolation(uint16_t vid)
+{
+	bpf_map_delete_elem(map_isolation, &vid);
+}
+
+int bridger_bpf_get_vlan_isolation(uint16_t vid,
+				   struct bridger_vlan_isolation *iso)
+{
+	return bpf_map_lookup_elem(map_isolation, &vid, iso);
+}
+
+void bridger_bpf_set_port_untagged_vlan(uint32_t ifindex, uint16_t vid)
+{
+	bpf_map_update_elem(map_port_untagged, &ifindex, &vid, BPF_ANY);
+}
+
+void bridger_bpf_del_port_untagged_vlan(uint32_t ifindex)
+{
+	bpf_map_delete_elem(map_port_untagged, &ifindex);
 }
 
 int bridger_bpf_init(void)
