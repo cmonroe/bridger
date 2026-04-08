@@ -387,11 +387,125 @@ bridger_set_config(struct ubus_context *ctx, struct ubus_object *obj,
 }
 
 
+static void status_add_mac(struct blob_buf *b, const char *name, const uint8_t *mac)
+{
+	blobmsg_add_string(b, name, format_macaddr(mac));
+}
+
+static void status_add_isolation(struct blob_buf *b)
+{
+	void *arr, *tbl;
+	int i;
+
+	arr = blobmsg_open_array(b, "isolation");
+	for (i = 0; i < n_isolated_vlans; i++) {
+		struct bridger_vlan_isolation iso = {};
+		struct isolation_entry *entry = &isolated_vlans[i];
+		uint16_t vid = entry->vid;
+
+		tbl = blobmsg_open_table(b, NULL);
+		blobmsg_add_u32(b, "vid", vid);
+		bridger_bpf_get_vlan_isolation(vid, &iso);
+		status_add_mac(b, "gateway_mac", entry->gateway_mac);
+
+		if (iso.upstream_ifindex) {
+			char ifname[IFNAMSIZ] = {};
+
+			if_indextoname(iso.upstream_ifindex, ifname);
+			blobmsg_add_string(b, "upstream", ifname[0] ? ifname : "(unknown)");
+			blobmsg_add_u32(b, "upstream_ifindex", iso.upstream_ifindex);
+		} else {
+			blobmsg_add_string(b, "mode", "router");
+		}
+
+		blobmsg_close_table(b, tbl);
+	}
+	blobmsg_close_array(b, arr);
+}
+
+static void status_add_devices(struct blob_buf *b)
+{
+	struct device *dev;
+	void *arr, *tbl, *varr;
+	int i;
+
+	arr = blobmsg_open_array(b, "devices");
+	avl_for_each_element(&devices, dev, node) {
+		if (!dev->attached && !dev->tx_attached)
+			continue;
+
+		tbl = blobmsg_open_table(b, NULL);
+		blobmsg_add_string(b, "name", dev->ifname);
+		blobmsg_add_u32(b, "ifindex", device_ifindex(dev));
+
+		if (dev->master)
+			blobmsg_add_string(b, "master", dev->master->ifname);
+		if (dev->br)
+			blobmsg_add_string(b, "type", "bridge");
+
+		blobmsg_add_u8(b, "attached", dev->attached);
+		blobmsg_add_u8(b, "tx_attached", dev->tx_attached);
+		blobmsg_add_u8(b, "isolated", dev->isolated);
+		blobmsg_add_u8(b, "hairpin", dev->hairpin_mode);
+		blobmsg_add_u8(b, "forwarding", dev->port_forwarding);
+
+		if (dev->redirect_dev) {
+			char ifname[IFNAMSIZ] = {};
+
+			if_indextoname(dev->redirect_dev, ifname);
+			blobmsg_add_string(b, "redirect", ifname[0] ? ifname : "(unknown)");
+		}
+
+		if (dev->n_vlans) {
+			varr = blobmsg_open_array(b, "vlans");
+			for (i = 0; i < dev->n_vlans; i++) {
+				void *vtbl = blobmsg_open_table(b, NULL);
+
+				blobmsg_add_u32(b, "id", dev->vlan[i].id);
+				if (dev->vlan[i].untagged)
+					blobmsg_add_u8(b, "untagged", 1);
+				if (dev->vlan[i].pvid)
+					blobmsg_add_u8(b, "pvid", 1);
+				if (dev->vlan[i].forwarding)
+					blobmsg_add_u8(b, "forwarding", 1);
+
+				blobmsg_close_table(b, vtbl);
+			}
+			blobmsg_close_array(b, varr);
+		}
+
+		blobmsg_close_table(b, tbl);
+	}
+	blobmsg_close_array(b, arr);
+}
+
+static int
+bridger_get_status(struct ubus_context *ctx, struct ubus_object *obj,
+		   struct ubus_request_data *req, const char *method,
+		   struct blob_attr *msg)
+{
+	static struct blob_buf b;
+
+	blob_buf_init(&b, 0);
+
+	blobmsg_add_u8(&b, "isolation_only", isolation_only);
+	blobmsg_add_u32(&b, "isolated_vlans", n_isolated_vlans);
+	blobmsg_add_u32(&b, "offloaded_flows", bridger_flow_count());
+
+	status_add_isolation(&b);
+	status_add_devices(&b);
+
+	ubus_send_reply(ctx, req, b.head);
+
+	return 0;
+}
+
 static const struct ubus_method bridger_methods[] = {
 	UBUS_METHOD("set_config", bridger_set_config, config_policy),
 	UBUS_METHOD("set_blacklist", bridger_set_blacklist, blacklist_policy),
 	UBUS_METHOD("set_device_config", bridger_set_device_config, devcfg_policy),
 	UBUS_METHOD("set_vlan_isolation", bridger_set_vlan_isolation, isolation_policy),
+	UBUS_METHOD_NOARG("status", bridger_get_status),
 };
 
 static struct ubus_object_type bridger_object_type =
