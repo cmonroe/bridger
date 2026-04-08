@@ -198,6 +198,19 @@ void bridger_bpf_del_port_untagged_vlan(uint32_t ifindex)
 	bpf_map_delete_elem(map_port_untagged, &ifindex);
 }
 
+void bridger_bpf_poll_disable(void)
+{
+	uloop_timeout_cancel(&poll_timer);
+}
+
+void bridger_bpf_poll_enable(void)
+{
+	if (!poll_timer.cb)
+		return;
+
+	bridger_bpf_poll_pending(&poll_timer);
+}
+
 int bridger_bpf_init(void)
 {
 	glob_t g;
@@ -218,7 +231,8 @@ int bridger_bpf_init(void)
 		return ret;
 
 	poll_timer.cb = bridger_bpf_poll_pending;
-	bridger_bpf_poll_pending(&poll_timer);
+	if (!isolation_only)
+		bridger_bpf_poll_pending(&poll_timer);
 
 	return 0;
 }

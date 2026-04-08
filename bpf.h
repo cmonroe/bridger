@@ -22,4 +22,7 @@ int bridger_bpf_get_vlan_isolation(uint16_t vid,
 void bridger_bpf_set_port_untagged_vlan(uint32_t ifindex, uint16_t vid);
 void bridger_bpf_del_port_untagged_vlan(uint32_t ifindex);
 
+void bridger_bpf_poll_disable(void);
+void bridger_bpf_poll_enable(void);
+
 #endif

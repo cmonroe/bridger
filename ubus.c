@@ -316,6 +316,7 @@ enum {
 	BRIDGER_CONFIG_LOCAL_TX,
 	BRIDGER_CONFIG_LOCAL_RX,
 	BRIDGER_CONFIG_BLACKLIST,
+	BRIDGER_CONFIG_ISOLATION_ONLY,
 	__BRIDGER_CONFIG_MAX
 };
 
@@ -323,6 +324,7 @@ static const struct blobmsg_policy config_policy[__BRIDGER_CONFIG_MAX] = {
 	[BRIDGER_CONFIG_LOCAL_RX] = { "bridge_local_rx", BLOBMSG_TYPE_BOOL },
 	[BRIDGER_CONFIG_LOCAL_TX] = { "bridge_local_tx", BLOBMSG_TYPE_BOOL },
 	[BRIDGER_CONFIG_BLACKLIST] = { "blacklist", BLOBMSG_TYPE_ARRAY },
+	[BRIDGER_CONFIG_ISOLATION_ONLY] = { "isolation_only", BLOBMSG_TYPE_BOOL },
 };
 
 static int
@@ -363,6 +365,19 @@ bridger_set_config(struct ubus_context *ctx, struct ubus_object *obj,
 		avl_for_each_element(&devices, dev, node)
 			if (dev->br)
 				device_clear_flows(dev);
+	}
+
+	cur = tb[BRIDGER_CONFIG_ISOLATION_ONLY];
+	if (cur) {
+		bool val = blobmsg_get_bool(cur);
+
+		if (isolation_only != val) {
+			isolation_only = val;
+			if (val)
+				bridger_bpf_poll_disable();
+			else
+				bridger_bpf_poll_enable();
+		}
 	}
 
 	if (changed)
