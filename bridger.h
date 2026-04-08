@@ -57,6 +57,7 @@ void bridger_udebug_config(struct udebug_ubus *ctx, struct blob_attr *data,
 
 
 extern bool bridge_local_rx;
+extern bool isolation_only;
 
 static inline void bridger_ewma(uint64_t *avg, uint32_t val)
 {
