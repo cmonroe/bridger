@@ -250,10 +250,27 @@ void device_clear_flows(struct device *dev)
 
 void device_free(struct device *dev)
 {
+	struct bridge *br = device_get_br(dev);
+	struct device *mdev;
+	struct fdb_entry *f, *tmp;
+
 	D("Free device %s\n", dev->ifname);
 
 	avl_delete(&devices, &dev->node);
-	device_clear_flows(dev);
+
+	if (!br && dev->master_ifindex) {
+		mdev = device_get(dev->master_ifindex);
+		if (mdev)
+			br = mdev->br;
+	}
+
+	if (br) {
+		list_for_each_entry_safe(f, tmp, &dev->fdb_entries, dev_list)
+			fdb_delete(br, f);
+	} else if (!list_empty(&dev->fdb_entries)) {
+		D("WARN freeing device %s with orphaned fdb entries\n", dev->ifname);
+	}
+
 	bridger_bpf_del_port_untagged_vlan(device_ifindex(dev));
 	device_set_tx_attached(dev, false);
 	device_set_attached(dev, false);
@@ -326,6 +343,8 @@ static void device_update_port_untagged_vlan(struct device *dev)
 static void __device_update(struct device *dev)
 {
 	struct device *master, *odev;
+	struct fdb_entry *f, *tmp;
+	struct bridge *old_br;
 	bool attach, tx_needed;
 
 	if (!dev->update)
@@ -333,17 +352,25 @@ static void __device_update(struct device *dev)
 
 	dev->update = false;
 	device_clear_flows(dev);
+	old_br = device_get_br(dev);
 	master = device_get(dev->master_ifindex);
 	if (dev->master != master) {
 		if (!list_empty(&dev->member_list))
 			list_del_init(&dev->member_list);
+
+		if (old_br) {
+			list_for_each_entry_safe(f, tmp, &dev->fdb_entries, dev_list)
+				fdb_delete(old_br, f);
+		}
 	}
 
 	if (master) {
-		if (master->br)
-			list_add_tail(&dev->member_list, &master->br->members);
-		else
+		if (master->br) {
+			if (list_empty(&dev->member_list))
+				list_add_tail(&dev->member_list, &master->br->members);
+		} else {
 			master = NULL;
+		}
 	}
 
 	if (dev->master != master)
